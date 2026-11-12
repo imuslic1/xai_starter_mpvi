@@ -6,19 +6,16 @@ Two independent, runnable **Python script** experiments for Windows 11 using eit
 
 ### 1. Common prerequisites (both hardware configurations)
 
-Install **Python 3.11 or 3.12** and current drivers for your **GPU**. Use a separate virtual environment per PyTorch backend; do **not** install CUDA and XPU wheels on top of each other in the same environment.
+Install **Python 3.11 or 3.12** and current drivers for your **GPU**. 
 
-Open PowerShell in the project directory:
+Open terminal in the project directory:
 
 ```powershell
 py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate
 python -m pip install --upgrade pip
 ```
-
-If your terminal already shows `(.venv)`, you only need to activate the environment; do not recreate it. If Windows prevents PowerShell from activating scripts, you can use ` .\.venv\Scripts\python.exe ` in place of `python`, or temporarily set the execution policy for this terminal with `Set-ExecutionPolicy -Scope Process Bypass`. **Administrator rights are not required** for the Python installation steps.
-
-### 2A. Intel CPU + Intel Arc GPU (native XPU; e.g. Core i5-14600K + Arc B580)
+### 2A. Intel Arc GPU (native XPU; e.g. Intel Arc B580)
 
 Install an up-to-date **Intel Arc graphics driver**, then install the PyTorch XPU build:
 
@@ -38,9 +35,9 @@ Official documentation: [PyTorch on Intel GPUs](https://docs.pytorch.org/docs/st
 
 **Do not install CUDA wheels or the old `intel-extension-for-pytorch` for this native XPU workflow.** If XPU is unavailable, update drivers and check that your PyTorch build includes XPU. For a CPU-only fallback, use `--device cpu` (significantly slower).
 
-### 2B. Intel CPU + NVIDIA GPU (CUDA; e.g. Core i5 + GeForce RTX)
+### 2B. NVIDIA GPU (CUDA; e.g. GeForce RTX)
 
-CUDA requires a **compatible NVIDIA GPU and current NVIDIA driver**. The Intel CPU needs no special ML runtime. Check whether the NVIDIA driver detects your GPU:
+CUDA requires a **compatible NVIDIA GPU and current NVIDIA driver**. Check whether the NVIDIA driver detects your GPU:
 
 ```powershell
 nvidia-smi
@@ -56,7 +53,7 @@ python -c "import torch; print('torch:', torch.__version__); print('CUDA:', torc
 
 Expected result: `CUDA: True` and the name of your NVIDIA GPU. If this installation is incompatible with your driver or GPU, **choose the CUDA command recommended for your machine** using the official [PyTorch installation selector](https://pytorch.org/get-started/locally/) or [version-specific wheel list](https://pytorch.org/get-started/previous-versions/); do not assume that the newest CUDA wheel supports every older GPU.
 
-You typically **do not need to install the full CUDA Toolkit** separately to run prebuilt PyTorch CUDA wheels; a compatible NVIDIA driver is required. The toolkit is relevant if you later compile CUDA extensions. `check_xpu.py` is an **Intel-only** check and is not appropriate for NVIDIA validation.
+You typically **do not need to install the full CUDA Toolkit** separately to run prebuilt PyTorch CUDA wheels; a compatible NVIDIA driver is sufficient. The toolkit is relevant if you later compile CUDA extensions. `check_xpu.py` is an **Intel-only** check and is not appropriate for NVIDIA validation.
 
 ### 3. Selecting a backend and running the scripts
 
@@ -189,9 +186,3 @@ python text_reviews.py --skip-train
 * Model downloads and Hugging Face dataset downloads require internet access the first time.
 * `images.py` keeps explainability on CPU for reliable autograd and visualization, even if training used XPU; `text_reviews.py` uses the selected training backend for occlusion when possible.
 * The same models are reused on subsequent runs from saved checkpoints. Delete output subfolders if you intentionally want to retrain from scratch.
-
-## Suggested academic presentation
-
-Question: **Does knowledge distillation preserve evidence used for decisions, as well as predictive performance?**
-
-Show three columns (teacher, conventional student, distilled student), one performance table, one attribution visual, one explanation agreement plot and one deletion-faithfulness plot. Discuss target class alignment, uncertainty, shortcut learning, dataset limitations and model domain shift.
