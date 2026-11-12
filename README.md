@@ -1,24 +1,131 @@
 # Explainable knowledge distillation: images + five-star reviews
 
-Two independent, runnable **Python script** experiments for Windows 11 and Intel Arc B580.
-Each has a **teacher**, a **standard supervised student**, and a **custom knowledge-distilled student**.
+Two independent, runnable **Python script** experiments for Windows 11 using either an **Intel Arc GPU (XPU)** or an **NVIDIA GPU (CUDA)**. Each experiment has a **teacher**, a **standard supervised student**, and a **custom knowledge-distilled student**.
 
-## Setup (PowerShell)
+## Setup on Windows 11 (PowerShell)
 
-Install the latest Intel Arc graphics driver first. Python 3.11/3.12, clean virtual environment:
+### 1. Common prerequisites (both hardware configurations)
+
+Install **Python 3.11 or 3.12** and current drivers for your **GPU**. Use a separate virtual environment per PyTorch backend; do **not** install CUDA and XPU wheels on top of each other in the same environment.
+
+Open PowerShell in the project directory:
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
+```
+
+If your terminal already shows `(.venv)`, you only need to activate the environment; do not recreate it. If Windows prevents PowerShell from activating scripts, you can use ` .\.venv\Scripts\python.exe ` in place of `python`, or temporarily set the execution policy for this terminal with `Set-ExecutionPolicy -Scope Process Bypass`. **Administrator rights are not required** for the Python installation steps.
+
+### 2A. Intel CPU + Intel Arc GPU (native XPU; e.g. Core i5-14600K + Arc B580)
+
+Install an up-to-date **Intel Arc graphics driver**, then install the PyTorch XPU build:
+
+```powershell
 python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/xpu
 python -m pip install -r requirements.txt
 python check_xpu.py
 ```
 
-Official PyTorch XPU instructions: https://docs.pytorch.org/get-started/additional-platforms/
+Expected result: `XPU available: True`, the Intel GPU name, and a successful matrix-multiplication check. Verify the same backend manually if needed:
 
-**Do not install CUDA wheels or old `intel-extension-for-pytorch`** for this native XPU workflow. If `check_xpu.py` says XPU is unavailable, check Windows 11, graphics drivers, and whether the PyTorch version supports the B580. Both experiments can run with `--device cpu` at reduced speed.
+```powershell
+python -c "import torch; print('torch:', torch.__version__); print('XPU:', torch.xpu.is_available())"
+```
+
+Official documentation: [PyTorch on Intel GPUs](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html).
+
+**Do not install CUDA wheels or the old `intel-extension-for-pytorch` for this native XPU workflow.** If XPU is unavailable, update drivers and check that your PyTorch build includes XPU. For a CPU-only fallback, use `--device cpu` (significantly slower).
+
+### 2B. Intel CPU + NVIDIA GPU (CUDA; e.g. Core i5 + GeForce RTX)
+
+CUDA requires a **compatible NVIDIA GPU and current NVIDIA driver**. The Intel CPU needs no special ML runtime. Check whether the NVIDIA driver detects your GPU:
+
+```powershell
+nvidia-smi
+```
+
+For example, the official **CUDA 12.6 PyTorch wheel** is a conservative Windows option when supported by your NVIDIA driver and GPU:
+
+```powershell
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+python -m pip install -r requirements.txt
+python -c "import torch; print('torch:', torch.__version__); print('CUDA:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'unavailable')"
+```
+
+Expected result: `CUDA: True` and the name of your NVIDIA GPU. If this installation is incompatible with your driver or GPU, **choose the CUDA command recommended for your machine** using the official [PyTorch installation selector](https://pytorch.org/get-started/locally/) or [version-specific wheel list](https://pytorch.org/get-started/previous-versions/); do not assume that the newest CUDA wheel supports every older GPU.
+
+You typically **do not need to install the full CUDA Toolkit** separately to run prebuilt PyTorch CUDA wheels; a compatible NVIDIA driver is required. The toolkit is relevant if you later compile CUDA extensions. `check_xpu.py` is an **Intel-only** check and is not appropriate for NVIDIA validation.
+
+### 3. Selecting a backend and running the scripts
+
+The shared `common.py` device selection already supports both stacks:
+
+| `--device` | Behavior |
+|---|---|
+| `auto` (default) | Choose available **XPU** first, then **CUDA**, then CPU |
+| `xpu` | Force native Intel GPU backend (requires XPU wheels and Intel GPU) |
+| `cuda` | Force NVIDIA CUDA backend (requires CUDA-enabled PyTorch and supported NVIDIA GPU) |
+| `cpu` | Run on CPU only |
+
+**Intel Arc example:**
+
+```powershell
+python images.py --device xpu --epochs 4 --kd-epochs 8 --batch 16
+python text_reviews.py --device xpu --train-size 3000 --epochs 2 --batch 8
+```
+
+**NVIDIA example:**
+
+```powershell
+python images.py --device cuda --epochs 4 --kd-epochs 8 --batch 16
+python text_reviews.py --device cuda --train-size 3000 --epochs 2 --batch 8
+```
+
+**Notes:**
+
+- On a PC with both GPUs, `--device auto` prefers Intel XPU if that backend is visible. Pass `--device cuda` explicitly to select NVIDIA.
+- Switching from an XPU environment to CUDA (or vice versa) is best done in a **new virtual environment**, installing only the relevant torch/torchvision wheels before `requirements.txt`.
+- Both scripts use their selected backend for training and evaluation. **Grad-CAM in `images.py` runs on the CPU intentionally**, for consistent backward-hook handling, regardless of which GPU trained the models.
+- Initial pretrained model and dataset downloads require internet access; checkpoints and generated results are stored under `outputs/`.
+- On Windows, Hugging Face's symlink-cache warning is normally harmless. Windows Developer Mode can enable symlinks without launching the terminal as Administrator. Optional `hf_xet` may speed some downloads but is not required.
+
+## Quick start: Windows batch launchers (no commands to remember)
+
+After following **Setup 1 + either 2A (Intel Arc) or 2B (NVIDIA CUDA)** above **once**, you can launch either experiment by double-clicking a `.bat` file in the project folder. The `.bat` files **do not install PyTorch or switch between XPU and CUDA wheels**; they run the already-configured Python environment for the intended GPU. No Administrator privileges are needed.
+
+| Windows launcher | Hardware | Experiment | Default arguments |
+|---|---|---|---|
+| `run_images_intel.bat` | Intel Arc GPU (XPU) | Bean disease / Grad-CAM | `--epochs 4 --kd-epochs 8 --batch 16` |
+| `run_text_intel.bat` | Intel Arc GPU (XPU) | Yelp sentiment | `--train-size 3000 --epochs 2 --batch 8` |
+| `run_images_cuda.bat` | NVIDIA GPU (CUDA) | Bean disease / Grad-CAM | `--epochs 4 --kd-epochs 8 --batch 16` |
+| `run_text_cuda.bat` | NVIDIA GPU (CUDA) | Yelp sentiment | `--train-size 3000 --epochs 2 --batch 8` |
+
+**How to use them:**
+
+1. Create/install the correct virtual environment once, using the manual setup instructions above.
+2. Double-click the matching `.bat` file (or run it from `cmd.exe` or PowerShell). A console window shows device verification, training epochs, evaluation and output paths; it remains open when the run finishes or fails.
+3. The launcher checks that the requested GPU backend is available **before** starting. If it fails, follow the manual environment setup for that GPU. It will **not silently fall back to CPU**.
+
+The launchers look for Python in this order: an already activated `VIRTUAL_ENV`, `.venv` in the project folder, then `.venv` in the parent folder. **If you maintain separate CUDA and XPU environments on the same PC, activate the appropriate environment before launching**; the scripts do not automatically pick a separate environment based on the GPU. For example, in PowerShell:
+
+```powershell
+# From the project folder, after installing CUDA wheels in a separate environment:
+..\.venv-cuda\Scripts\Activate.ps1
+.\run_images_cuda.bat
+```
+
+Optional CLI arguments are forwarded to the Python script. For example, in PowerShell:
+
+```powershell
+.\run_images_intel.bat --skip-train
+.\run_text_cuda.bat --train-size 5000 --epochs 3 --batch 4
+```
+
+The launchers explicitly set `--device xpu` or `--device cuda`. Python's argument parser uses the later value for duplicate options, so additional epoch/batch arguments override the launcher defaults. Existing saved checkpoints are automatically reused; to retrain from scratch, move or delete the relevant checkpoints first.
+
+The **manual `python ... --device ...` commands remain fully supported**; use them for advanced configurations, CPU fallback or debugging.
 
 ## Experiment 1: bean leaf disease and Grad-CAM
 
@@ -77,10 +184,10 @@ python text_reviews.py --skip-train
 
 ## Performance and compatibility notes
 
-* The scripts use eager PyTorch (no `torch.compile`), FP32, small batches, zero DataLoader workers; these conservative choices avoid many Windows/XPU-specific issues.
-* For incompatible XPU backward kernels or memory errors, try `--device cpu` or reduce `--batch` to 4 or 8. CPU may be substantially slower.
+* The scripts use eager PyTorch (no `torch.compile`), FP32, small batches, zero DataLoader workers; these conservative choices avoid many Windows GPU-specific issues.
+* For unsupported GPU kernels or memory errors, reduce `--batch` to 4 or 8 or try `--device cpu`. CPU may be substantially slower.
 * Model downloads and Hugging Face dataset downloads require internet access the first time.
-* `images.py` keeps explainability on CPU for reliable autograd and visualization, even if training used XPU; `text_reviews.py` uses XPU inference for occlusion by default.
+* `images.py` keeps explainability on CPU for reliable autograd and visualization, even if training used XPU; `text_reviews.py` uses the selected training backend for occlusion when possible.
 * The same models are reused on subsequent runs from saved checkpoints. Delete output subfolders if you intentionally want to retrain from scratch.
 
 ## Suggested academic presentation
