@@ -33,7 +33,7 @@ echo.
 echo [START] Running images.py ...
 echo.
 rem Extra arguments override argparse defaults (e.g. --skip-train or --epochs 10).
-"%PYTHON%" "%~dp0images.py" --epochs 4 --kd-epochs 8 --batch 16 %* --device cuda
+"%PYTHON%" "%~dp0..\images.py" --epochs 4 --kd-epochs 8 --batch 16 %* --device cuda
 if errorlevel 1 (
   echo.
   echo [ERROR] Experiment failed. Review the traceback above.

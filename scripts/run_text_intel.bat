@@ -33,7 +33,7 @@ echo.
 echo [START] Running text.py ...
 echo.
 rem Extra arguments override argparse defaults (e.g. --skip-train or --epochs 10).
-"%PYTHON%" "%~dp0text_reviews.py" --train-size 3000 --epochs 2 --batch 8 %* --device xpu
+"%PYTHON%" "%~dp0..\text_reviews.py" --train-size 3000 --epochs 2 --batch 8 %* --device xpu
 if errorlevel 1 (
   echo.
   echo [ERROR] Experiment failed. Review the traceback above.
