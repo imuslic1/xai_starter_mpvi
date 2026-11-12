@@ -166,7 +166,7 @@ def deletion_curve(model, tokenizer, words, weights, max_length, target):
     return fractions, p
 
 
-def explain(models, tokenizers, examples, out, device, max_length, n):
+def explain(models, tokenizers, examples, out, device, max_length, n, max_words):
     if n < 1:
         raise ValueError('--explain-n must be at least 1')
     rows, details = [], []
@@ -175,7 +175,7 @@ def explain(models, tokenizers, examples, out, device, max_length, n):
         raise ValueError('No reviews to explain')
     info(f'Creating word-occlusion explanations for {len(selected)} reviews.')
     for i, row in enumerate(selected):
-        text = ' '.join(row['text'].split()[:40])
+        text = ' '.join(row['text'].split()[:max_words])
         true_rating = int(row['label']) + 1
         with torch.no_grad():
             target = int(logits(models['teacher'], tokenizers['teacher'],
@@ -187,7 +187,7 @@ def explain(models, tokenizers, examples, out, device, max_length, n):
             model = models[name]
             model.to(device).eval()
             words, weights, prob = occlusion(model, tokenizers[name], text,
-                                             max_length, target)
+                                             max_length, target, max_words=max_words)
             fractions, curve = deletion_curve(model, tokenizers[name], words,
                                                weights, max_length, target)
             weights_by_model[name], plot_prob[name] = weights, prob
@@ -317,6 +317,12 @@ def main():
     parser.add_argument('--device', default='auto')
     parser.add_argument('--out', default='outputs/text')
     parser.add_argument('--skip-train', action='store_true')
+    parser.add_argument(
+    '--explain-words',
+    type=int,
+    default=100,
+    help='Maximum number of words per review used for XAI'
+    )
     args = parser.parse_args()
     if min(args.train_size, args.val_size, args.test_size, args.batch, args.explain_n) < 1:
         parser.error('Sizes, batch, and --explain-n must be positive')
@@ -397,7 +403,7 @@ def main():
                                    [row['text']], args.max_length).argmax(-1).item())
         (mismatches if abs(predicted - int(row['label'])) >= 2 else others).append(row)
     details = explain(models, tokenizers, mismatches + others, out, device,
-                      args.max_length, args.explain_n)
+                      args.max_length, args.explain_n, args.explain_words)
     info(f'Found {len(mismatches)} teacher/rating disagreements in the first '
          f'{min(100, len(test_rows))} test reviews (not a random sample of dashboard examples).')
 
