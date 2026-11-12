@@ -1,0 +1,10 @@
+# Install torch and torchvision from the PyTorch XPU wheel index separately.
+datasets>=3.0,<5
+transformers>=4.45,<5
+accelerate>=1.0,<2
+numpy>=1.26,<3
+Pillow>=10
+matplotlib>=3.8
+scikit-learn>=1.4
+scipy>=1.11
+safetensors>=0.4
