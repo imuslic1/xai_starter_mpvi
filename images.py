@@ -374,31 +374,76 @@ def deletion_drop(
     return round(before - after, 4)
 
 
+def select_balanced_examples(data, examples_per_class=5, seed=42):
+    """Select reproducible test samples from every class."""
+    rng = np.random.default_rng(seed)
+    labels = np.asarray(data.data["labels"])
+    selected = []
+
+    for class_id, class_name in enumerate(CLASSES):
+        candidates = np.flatnonzero(labels == class_id)
+
+        n = min(examples_per_class, len(candidates))
+        indices = rng.choice(
+            candidates, size=n, replace=False
+        ).tolist()
+
+        selected.append(indices)
+        info(f"{class_name}: selected {n} images")
+
+    # Interleave classes: 0, 1, 2, 0, 1, 2, ...
+    return [
+        group[i]
+        for i in range(max(map(len, selected)))
+        for group in selected
+        if i < len(group)
+    ]
+
+
 # ============================================================
 # EXPLAINABILITY OUTPUTS
 # ============================================================
 
-def explain(models_dict, data, out):
+
+def explain(models_dict, data, out, examples_per_class=5):
+    """Generate balanced Grad-CAM examples and save all model predictions."""
+
     names = list(models_dict)
     rows = []
+    prediction_records = {}
 
-    count = min(8, len(data))
-
-    info(
-        f"Generating Grad-CAM explanations "
-        f"for {count} test images."
+    selected_indices = select_balanced_examples(
+        data,
+        examples_per_class=examples_per_class
     )
 
-    for i in range(count):
-        x, y = data[i]
+    count = len(selected_indices)
+
+    info(f"Generating Grad-CAM explanations for {count} test images.")
+
+    for i, dataset_index in enumerate(selected_indices):
+        x, y = data[dataset_index]
         x = x.unsqueeze(0)
 
+        # Predict the class independently with each model.
         with torch.no_grad():
-            teacher_pred = int(
-                models_dict["teacher"](x)
-                .argmax(1).item()
-            )
+            predictions = {
+                name: int(
+                    model.cpu().eval()(x).argmax(1).item()
+                )
+                for name, model in models_dict.items()
+            }
 
+        teacher_pred = predictions["teacher"]
+
+        # Store predictions using readable class names.
+        prediction_records[str(i)] = {
+            name: CLASSES[pred]
+            for name, pred in predictions.items()
+        }
+
+        # All Grad-CAM maps use the teacher's target class
+        # so the explanations remain directly comparable.
         heatmaps = {
             kind: cam(model, x, kind, teacher_pred)
             for kind, model in models_dict.items()
@@ -409,7 +454,6 @@ def explain(models_dict, data, out):
             * np.array(STD)
             + np.array(MEAN)
         )
-
         image = np.clip(image, 0, 1)
 
         fig, axes = plt.subplots(
@@ -417,9 +461,7 @@ def explain(models_dict, data, out):
         )
 
         axes[0].imshow(image)
-        axes[0].set_title(
-            f"True: {CLASSES[y]}"
-        )
+        axes[0].set_title(f"True: {CLASSES[y]}")
 
         for axis, (name, heat) in zip(
             axes[1:], heatmaps.items()
@@ -438,27 +480,24 @@ def explain(models_dict, data, out):
             axis.axis("off")
 
         fig.suptitle(
-            "Grad-CAM | Teacher target: "
-            + CLASSES[teacher_pred]
+            f"Grad-CAM | Teacher target: {CLASSES[teacher_pred]}"
         )
-
         fig.tight_layout()
 
         image_path = out / f"gradcam_{i:02d}.png"
 
-        fig.savefig(
-            image_path, dpi=150
-        )
-
+        fig.savefig(image_path, dpi=150)
         plt.close(fig)
 
         info(
-            f"Image {i + 1:>2}/{count}: "
-            f"true={CLASSES[y]:<18} "
-            f"teacher={CLASSES[teacher_pred]:<18} "
-            f"saved {image_path.name}"
+            f"Image {i + 1:>2}/{count} | "
+            f"True: {CLASSES[y]} | "
+            f"Teacher: {CLASSES[predictions['teacher']]} | "
+            f"Baseline: {CLASSES[predictions['baseline']]} | "
+            f"Distilled: {CLASSES[predictions['distilled']]}"
         )
 
+        # Calculate XAI metrics for all three models.
         for name in names:
             heat = heatmaps[name]
 
@@ -473,10 +512,7 @@ def explain(models_dict, data, out):
                 "teacher_target": CLASSES[teacher_pred],
                 "model": name,
                 "iou_top20_vs_teacher": round(
-                    top_iou(
-                        heatmaps["teacher"],
-                        heat
-                    ), 4
+                    top_iou(heatmaps["teacher"], heat), 4
                 ),
                 "spearman_vs_teacher": round(
                     float(correlation)
@@ -492,15 +528,24 @@ def explain(models_dict, data, out):
                 )
             })
 
-    with (
-        out / "explainability.csv"
-    ).open("w", newline="") as file:
+    # Save explainability measurements.
+    with (out / "explainability.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as file:
         writer = csv.DictWriter(
             file,
             fieldnames=rows[0].keys()
         )
         writer.writeheader()
         writer.writerows(rows)
+
+    # Save predictions separately from the XAI metrics.
+    (out / "predictions.json").write_text(
+        json.dumps(prediction_records, indent=2),
+        encoding="utf-8"
+    )
+
+    info("Saved explainability.csv and predictions.json")
 
 
 # ============================================================
@@ -1155,46 +1200,114 @@ th {
         </button>
     `).join('');
 
-    function render() {
-        const s = D.samples.find(s => s.id === sample);
-        if (!s) return;
+    
+function render() {
+    const s = D.samples.find(s => s.id === sample);
+    if (!s) return;
 
-        $('heatmap').src = s.image;
+    // Display the selected Grad-CAM image.
+    $('heatmap').src = s.image;
 
-        $('sample-label').innerHTML = `
-            True class: <b>${esc(s.true)}</b> ·
-            Teacher prediction: <b>${esc(s.target)}</b>
-        `;
+    const readable = name =>
+        esc(name.replaceAll('_', ' '));
 
-        $('tabs').querySelectorAll('button').forEach(
-            b => b.classList.toggle(
-                'active',
-                b.dataset.model === model
-            )
-        );
+    // Prediction row with correctness indicator.
+    const predictionRow = (label, prediction) => {
+        const correct = prediction === s.true;
 
-        const r = s.rows[model];
-        if (!r) return;
+        const color = correct ? '#4ce1d2' : '#ff7497';
+        const symbol = correct ? '✓' : '✗';
 
-        $('xai-metrics').innerHTML = [
-            ['Top-20% IoU', r.iou_top20_vs_teacher],
-            ['Spearman ρ', r.spearman_vs_teacher],
-            ['Deletion Δp', r.deletion_drop_top20]
-        ].map(([key, value]) => `
-            <div class="mini">
-                <span class="small">${key}</span>
-                <strong>${fmt(value)}</strong>
+        return `
+            <div style="
+                display:flex;
+                justify-content:space-between;
+                align-items:center;
+                gap:12px;
+                padding:10px 0;
+                border-bottom:1px solid #2c405e;
+            ">
+                <span>${label}</span>
+
+                <strong style="color:${color}">
+                    ${readable(prediction)}
+                    &nbsp;${symbol}
+                </strong>
             </div>
-        `).join('');
+        `;
+    };
 
-        $('xai-note').textContent =
-            model === 'teacher'
-                ? 'The teacher is compared to itself ' +
-                  'for IoU and correlation.'
-                : 'IoU and rank correlation measure ' +
-                  'similarity to the teacher Grad-CAM ' +
-                  'for the same target class.';
-    }
+    // Display actual class and every model's prediction.
+    $('sample-label').innerHTML = `
+        <div style="
+            background:#0c192c;
+            padding:18px;
+            border-radius:12px;
+            margin:18px 0;
+        ">
+            <div style="margin-bottom:12px">
+                <span style="color:#a1b2ca">
+                    ACTUAL CLASS
+                </span>
+
+                <div style="
+                    font-size:20px;
+                    font-weight:700;
+                    margin-top:5px;
+                ">
+                    ${readable(s.true)}
+                </div>
+            </div>
+
+            ${predictionRow(
+                'Teacher (ResNet-50)',
+                s.predictions.teacher
+            )}
+
+            ${predictionRow(
+                'Baseline (MobileNetV3)',
+                s.predictions.baseline
+            )}
+
+            ${predictionRow(
+                'Distilled (ResNet-18)',
+                s.predictions.distilled
+            )}
+        </div>
+    `;
+
+    // Highlight the currently selected model tab.
+    $('tabs').querySelectorAll('button').forEach(
+        b => b.classList.toggle(
+            'active',
+            b.dataset.model === model
+        )
+    );
+
+    // Display Grad-CAM metrics for selected model.
+    const r = s.rows[model];
+    if (!r) return;
+
+    $('xai-metrics').innerHTML = [
+        ['Top-20% IoU', r.iou_top20_vs_teacher],
+        ['Spearman ρ', r.spearman_vs_teacher],
+        ['Deletion Δp', r.deletion_drop_top20]
+    ].map(([key, value]) => `
+        <div class="mini">
+            <span class="small">${key}</span>
+            <strong>${fmt(value)}</strong>
+        </div>
+    `).join('');
+
+    $('xai-note').textContent =
+        model === 'teacher'
+            ? 'The teacher is compared to itself for ' +
+              'IoU and correlation.'
+            : 'IoU and rank correlation measure ' +
+              'similarity to the teacher Grad-CAM ' +
+              'for the same target class.';
+}
+
 
     $('sample').addEventListener(
         'change',
@@ -1369,12 +1482,13 @@ th {
 # HTML DASHBOARD GENERATOR
 # ============================================================
 
+
 def build_dashboard(out, results, history):
     """Generate a self-contained offline HTML dashboard."""
 
-    with (
-        out / "explainability.csv"
-    ).open(newline="", encoding="utf-8") as file:
+    with (out / "explainability.csv").open(
+        newline="", encoding="utf-8"
+    ) as file:
         rows = list(csv.DictReader(file))
 
     for row in rows:
@@ -1387,11 +1501,16 @@ def build_dashboard(out, results, history):
         ):
             row[key] = float(row[key])
 
+    # Load independently calculated model predictions.
+    predictions_path = out / "predictions.json"
+
+    predictions = json.loads(
+        predictions_path.read_text(encoding="utf-8")
+    )
+
     samples = []
 
-    for index in sorted(
-        {r["sample"] for r in rows}
-    ):
+    for index in sorted({r["sample"] for r in rows}):
         image_path = out / f"gradcam_{index:02d}.png"
 
         if not image_path.exists():
@@ -1406,12 +1525,17 @@ def build_dashboard(out, results, history):
             "id": index,
             "true": current[0]["true"],
             "target": current[0]["teacher_target"],
+
+            # Predictions from all three models.
+            "predictions": predictions[str(index)],
+
             "image": (
                 "data:image/png;base64," +
                 base64.b64encode(
                     image_path.read_bytes()
                 ).decode("ascii")
             ),
+
             "rows": {
                 r["model"]: r
                 for r in current
@@ -1431,7 +1555,7 @@ def build_dashboard(out, results, history):
         allow_nan=False
     )
 
-    # Safely embed JSON inside the HTML document.
+    # Safely embed JSON into the HTML document.
     payload = (
         payload
         .replace("<", r"\u003c")
@@ -1487,6 +1611,13 @@ def main():
     parser.add_argument(
         "--skip-train",
         action="store_true"
+    )
+
+    parser.add_argument(
+        "--examples-per-class",
+        type=int,
+        default=5,
+        help="Number of Grad-CAM examples per class"
     )
 
     args = parser.parse_args()
@@ -1671,7 +1802,8 @@ def main():
     explain(
         models_dict,
         test_ds,
-        out
+        out,
+        examples_per_class=args.examples_per_class
     )
 
     # HTML dashboard
