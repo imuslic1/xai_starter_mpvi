@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title XAI - Images - CUDA
+title XAI - Text - INTEL
 
 rem Prefer an activated venv; otherwise check project and parent folders.
 set "PYTHON="
@@ -16,13 +16,13 @@ if not defined PYTHON (
 
 echo.
 echo ============================================================
-echo  XAI KNOWLEDGE DISTILLATION - IMAGES - CUDA
+echo  XAI KNOWLEDGE DISTILLATION - TEXT - INTEL
 echo ============================================================
 echo  Python: "%PYTHON%"
-echo  Backend: cuda
+echo  Backend: xpu
 echo.
 
-"%PYTHON%" -c "import torch; assert torch.cuda.is_available(), 'CUDA unavailable: install CUDA PyTorch and check NVIDIA drivers'; print('GPU:', torch.cuda.get_device_name(0))"
+"%PYTHON%" -c "import torch; assert hasattr(torch, 'xpu') and torch.xpu.is_available(), 'Intel XPU unavailable: install XPU PyTorch and check Intel drivers'; print('GPU:', torch.xpu.get_device_name(0))"
 if errorlevel 1 (
   echo.
   echo [ERROR] GPU backend check failed. See README setup instructions.
@@ -30,17 +30,17 @@ if errorlevel 1 (
 )
 
 echo.
-echo [START] Running images.py ...
+echo [START] Running text.py ...
 echo.
 rem Extra arguments override argparse defaults (e.g. --skip-train or --epochs 10).
-"%PYTHON%" "%~dp0..\images.py" --epochs 4 --kd-epochs 8 --batch 16 %* --device cuda
+"%PYTHON%" "%~dp0text_reviews.py" --train-size 3000 --epochs 2 --batch 8 %* --device xpu
 if errorlevel 1 (
   echo.
   echo [ERROR] Experiment failed. Review the traceback above.
   goto :error
 )
 echo.
-echo [DONE] Experiment completed. Check outputs\images\
+echo [DONE] Experiment completed. Check outputs\text\
 goto :finish
 
 :error
